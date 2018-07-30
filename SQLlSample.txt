@@ -1,0 +1,290 @@
+SELECT p.fio,
+       CASE coalesce(w.contact, '')
+           WHEN '' THEN '____________________'
+           ELSE w.contact
+       END "contact",
+       w.number,
+       w.name,
+       dr.bi_rads "biRads",
+       CASE coalesce(TO_CHAR(dc.coupon_time, 'DD.MM.YYYY'), '')
+           WHEN '' THEN '____________________'
+           ELSE TO_CHAR(dc.coupon_time, 'DD.MM.YYYY')
+       END "coupon_date"
+FROM doc "d"
+LEFT JOIN invite "i" ON i.id=d.invite_id
+LEFT JOIN workplace "w" ON w.id=i.cabinet_id
+LEFT JOIN doc_radiology "dr" ON dr.doc_id=
+  (SELECT id
+   FROM doc "d3"
+   WHERE invite_id = d.invite_id
+     AND TYPE = 5
+     OR TYPE = 7
+     AND
+       (SELECT FINAL
+        FROM doc_radiology "dr2"
+        WHERE dr2.doc_id = d3.id) = TRUE
+   ORDER BY create_time DESC, id DESC
+   LIMIT 1)
+LEFT JOIN doc_coupon "dc" ON dc.doc_id=
+  (SELECT id
+   FROM doc
+   WHERE invite_id = d.invite_id
+     AND TYPE = 3
+     OR TYPE = 6
+   ORDER BY create_time DESC, id DESC
+   LIMIT 1)
+LEFT JOIN patient "p" ON p.id=i.patient_id
+WHERE d.id=?
+
+------------------------------------------------------------------------------------------------------
+
+SELECT I.MedInspectCode "recordId",
+       I.InspectDate "parentDate",
+       I.InspectDate "recordDate",
+       COALESCE(I.MedInspectCode, '')::text || '-' "path",
+       22 "recordType",
+       NULL "parentId",
+            NULL "parentType",
+                 1 "sortType",
+                 I.MedInspectCode "id",
+                 I.EnterpriseCode "entrepriseId",
+                 I.PlanDate "planDate",
+                 I.MedPatientCode "patientId",
+                 I.MedPreventCode "preventGroup",
+                 I.ActualDate "actualDate",
+                 I.InspectKind "inspectKind",
+                 I.UniDictCodeDrComission "udDrComissionId",
+                 I.UniDictCodeProfessionRW "udProfessionRwId",
+                 I.UniDictCodeWorkCondition "udWorkConditionId",
+                 I.DiagnosisNote "diagnosisNote",
+                 I.DocumentList "documentList",
+                 I.Information "information",
+                 CASE U.Value IS NULL
+                     WHEN TRUE THEN '<все>'
+                     WHEN FALSE THEN U.Value
+                 END "professionRw",
+                 UWC.Value "workCondition",
+                 PR.Name "preventName",
+                 PR.MedPreventTypeCode "preventTypeId",
+                 COALESCE(mpt.InputForm, 0) "preventInputForm",
+                 P.NumberHistorySickness "numberHistorySickness",
+                 asa_trim(M.SurName || ' ' || M.Name || ' ' || M.SecondName)::text "patientFIO",
+                 PG.Name "patientGroup",
+                 PG.MedPatientGroupCode "patientGroupId",
+                 asa_trim(
+                            (SELECT string_agg((asa_trim(EK_.Name|| ': ' || E_.Name || CASE asa_trim(MPB_.ClassGroup) <> ''
+                                                                                           WHEN TRUE THEN ' - ' || MPB_.ClassGroup
+                                                                                       END || CASE asa_trim(UD_.Value) <> ''
+                                                                                                  WHEN TRUE THEN ' (' || UD_.Value || ')'
+                                                                                              END))::text, ',')
+                             FROM MedPatientBusy MPB_
+                             JOIN Enterprise E_ ON E_.EnterpriseCode = MPB_.EnterpriseCode
+                             LEFT JOIN UniDict UD_ ON UD_.UniDictCode = MPB_.UniDictCodeProfession
+                             AND UD_.DictNumber = 19
+                             LEFT JOIN EnterpriseKind EK_ ON EK_.EnterpriseKindCode = MPB_.EnterpriseKindCode
+                             WHERE MPB_.MedPatientCode = I.MedPatientCode
+                               AND I.PlanDate BETWEEN MPB_.StartDate AND MPB_.FinishDate)::text) "patientBusy",
+                 I.InspectDate "inspectDate",
+                 I.MedDoctorCode "doctorId",
+                 asa_trim(MD.SurName || ' ' || MD.Name || ' ' || MD.SecondName)::text "doctorFIO",
+                 I.Conclusion,
+                 MP.DateOfBirth "dateOfBirth",
+                 FN_cmCalcAddress(MP.manCode, 0) "address",
+                 FN_cmCalcAddress(MP.manCode, 1) "addressReside",
+                 I.UniDictCodeResult "udResultId",
+                 I.TermExtraInspect "termExtraInspect",
+                 I.DocumentNumber "documentNumber",
+                 I.UniDictCodeDrComissionDirect "udDrComissionDirectId",
+                 I.State "state",
+                 I.Checked "checked",
+                 I.MedInspectCodeParent "inspectParentId",
+                 asa_trim(
+                            (SELECT DATEFORMAT(MI_.InspectDate, 'dd.mm.yyyy') || ' ' || M_.SurName || ' ' || M_.Name || ' ' || M_.SecondName
+                             FROM MedInspect MI_
+                             LEFT JOIN MedDoctor MD_ ON MD_.MedDoctorCode = MI_.MedDoctorCode
+                             LEFT JOIN Man M_ ON M_.ManCode = MD_.ManCode
+                             WHERE MI_.MedInspectCode = I.MedInspectCodeParent)) || ' ' || COALESCE(
+                                                                                                      (SELECT string_agg((MCG_.Name)::text, ','
+                                                                                                                         ORDER BY MC_.Name)
+                                                                                                       FROM MedInspectConclusion MIC_
+                                                                                                       JOIN MedConclusionGroup MCG_ ON MCG_.MedConclusionGroupCode = MIC_.MedConclusionGroupCode
+                                                                                                       JOIN MedConclusion MC_ ON MC_.MedConclusionCode = MCG_.MedConclusionCode
+                                                                                                       WHERE MIC_.MedInspectCode = I.MedInspectCodeParent), '')::text "inspectParentName",
+                 MP.PersonalNumber "personalNumber",
+
+  (SELECT MedInspectCode
+   FROM MedInspect
+   WHERE MedInspectCodeParent = I.MedInspectCode
+   LIMIT 1) "inspectDirectToCode",
+                 CASE (
+                         (SELECT MedInspectCode
+                          FROM MedInspect
+                          WHERE MedInspectCodeParent = I.MedInspectCode
+                          LIMIT 1)) IS NULL
+                     WHEN TRUE THEN ''
+                     WHEN FALSE THEN asa_trim(
+                                                (SELECT UD_.Cipher || ' - ' || UD_.Value || ' - ' || COALESCE(DATEFORMAT(MI_.PlanDate, 'dd.mm.yyyy') || ' ', '')
+                                                 FROM MedInspect MI_
+                                                 LEFT JOIN UniDict UD_ ON UD_.UniDictCode = MI_.UniDictCodeDrComission
+                                                 LEFT JOIN MedDoctor MD_ ON MD_.MedDoctorCode = MI_.MedDoctorCode
+                                                 LEFT JOIN Man M_ ON M_.ManCode = MD_.ManCode
+                                                 WHERE MI_.MedInspectCode = (
+                                                                               (SELECT MedInspectCode
+                                                                                FROM MedInspect
+                                                                                WHERE MedInspectCodeParent = I.MedInspectCode
+                                                                                LIMIT 1)))) || ' ' ||
+                            (SELECT '(' || string_agg((MCG_.Name)::text, ','
+                                                      ORDER BY MC_.Name) || ')'
+                             FROM MedInspectConclusion MIC_
+                             JOIN MedConclusionGroup MCG_ ON MCG_.MedConclusionGroupCode = MIC_.MedConclusionGroupCode
+                             JOIN MedConclusion MC_ ON MC_.MedConclusionCode = MCG_.MedConclusionCode
+                             WHERE MIC_.MedInspectCode = (
+                                                            (SELECT MedInspectCode
+                                                             FROM MedInspect
+                                                             WHERE MedInspectCodeParent = I.MedInspectCode
+                                                             LIMIT 1)))
+                 END::text "medInspectDirectToName",
+
+  (SELECT CASE EXISTS
+                     (SELECT 1
+                      FROM
+                        (SELECT 1
+                         FROM MedInspectResult MIR_
+                         WHERE MIR_.MedInspectCode = INS_.MedInspectCode
+                           AND MIR_.PlanDate IS NOT NULL
+                           AND MIR_.InspectDate IS NULL
+                         LIMIT 1) _MIR
+                      UNION ALL SELECT 1
+                      FROM
+                        (SELECT 1
+                         FROM MedInspectResearch MIR_
+                         WHERE MIR_.MedInspectCode = INS_.MedInspectCode
+                           AND MIR_.PlanDate IS NOT NULL
+                           AND MIR_.ResearchDate IS NULL
+                         LIMIT 1) _MIRe)
+              WHEN TRUE THEN 1
+              WHEN FALSE THEN 0
+          END InvalidState
+   FROM MedInspect INS_
+   WHERE INS_.MedInspectCode = I.MedInspectCode) "invalidState",
+                 conclusion."conclusionGroupNames",
+                 conclusion."conclusionNames",
+                 conclusion."conclusionIds"
+FROM MedInspect I
+JOIN MedPatient P ON P.MedPatientCode = I.MedPatientCode
+JOIN Man M ON M.ManCode = P.ManCode
+JOIN MedPrevent PR ON PR.MedPreventCode = I.MedPreventCode
+LEFT JOIN MedPreventType MPT ON PR.MedPreventTypeCode = MPT.MedPreventTypeCode
+LEFT JOIN MedPatientGroup PG ON PG.MedPatientGroupCode = P.MedPatientGroupCode
+LEFT JOIN MedDoctor D ON D.MedDoctorCode = I.MedDoctorCode
+LEFT JOIN Man MD ON MD.ManCode = D.ManCode
+LEFT JOIN ManPassport MP ON MP.ManCode = M.ManCode
+LEFT JOIN UniDict U ON U.DictNumber = 41
+AND U.UniDictCode = I.UniDictCodeProfessionRW
+LEFT JOIN UniDict UWC ON UWC.DictNumber = 43
+AND UWC.UniDictCode = I.UniDictCodeWorkCondition /* перенес из полей, немного ускоряет выборку */
+JOIN LATERAL
+  (SELECT string_agg(MCG_.Name::text, ','
+                     ORDER BY MC_.Name) "conclusionGroupNames",
+          string_agg(MC_.Name::text, ','
+                     ORDER BY MC_.Name) "conclusionNames",
+          string_agg(MC_.MedConclusionCode::text, ','
+                     ORDER BY MC_.Name) "conclusionIds"
+   FROM MedInspectConclusion MIC_
+   JOIN MedConclusionGroup MCG_ ON MCG_.MedConclusionGroupCode = MIC_.MedConclusionGroupCode
+   JOIN MedConclusion MC_ ON MC_.MedConclusionCode = MCG_.MedConclusionCode
+   WHERE MIC_.MedInspectCode = I.MedInspectCode) conclusion ON TRUE
+WHERE (I.MedPatientCode = 0
+       OR 0 = 0)
+  AND (I.MedInspectCode = 0
+       OR 0 = 0)
+  AND (I.InspectKind= 0
+       OR 0 = 0)
+  AND (I.UniDictCodeDrComission = 0
+       OR 0 = 0)
+  AND I.EnterpriseCode = 1
+  AND (PR.MedPreventTypeCode = 0
+       OR 0=0)
+  AND (1 = 0
+       OR ((0 = 1
+            AND I.InspectDate >= 19700101)
+           OR (0 = 2
+               AND I.PlanDate >= 19700101)
+           OR (0 = 0
+               AND (I.InspectDate >= 19700101
+                    OR I.PlanDate >= 19700101)))
+       AND (((I.InspectDate <= 30000101
+              AND I.InspectDate >= 19700101)
+             OR (I.PlanDate <= 30000101
+                 AND I.PlanDate >= 19700101))))
+  AND (1 = 0
+       OR ((0 = 1
+            AND I.InspectDate <= 30000101)
+           OR (0 = 2
+               AND I.PlanDate <= 30000101)
+           OR (0 = 0
+               AND (I.InspectDate <= 30000101
+                    OR I.PlanDate <= 30000101)))
+       AND (((I.InspectDate <= 30000101
+              AND I.InspectDate >= 19700101)
+             OR (I.PlanDate <= 30000101
+                 AND I.PlanDate >= 19700101))))
+  AND (0 = 0
+       OR I.MedPreventCode = 0)
+  AND (0 = 0
+       OR (0 = 1
+           AND I.InspectDate IS NOT NULL)
+       OR (0 = 2
+           AND I.InspectDate IS NULL))
+  AND (0 = 0
+       OR P.MedPatientGroupCode = 0)
+  AND (0 = 0
+       OR COALESCE(
+                     (SELECT MedPatientBusyCode
+                      FROM MedPatientBusy
+                      WHERE MedPatientCode = I.MedPatientCode
+                        AND EnterpriseCode = 0
+                        AND I.PlanDate BETWEEN StartDate AND FinishDate
+                      LIMIT 1), 0) <> 0)
+  AND (0 = 0
+       OR COALESCE(
+                     (SELECT MPB_.MedPatientBusyCode
+                      FROM MedPatientBusy MPB_
+                      JOIN EnterpriseInKind EK_ ON EK_.EnterpriseCode = MPB_.EnterpriseCode
+                      AND EK_.EnterpriseKindCode = 0
+                      WHERE MPB_.MedPatientCode = I.MedPatientCode
+                        AND I.PlanDate BETWEEN MPB_.StartDate AND MPB_.FinishDate
+                      LIMIT 1), 0) <> 0)
+  AND ('' = ''
+       OR COALESCE(
+                     (SELECT MedPatientBusyCode
+                      FROM MedPatientBusy
+                      WHERE MedPatientCode = I.MedPatientCode
+                        AND ClassGroup LIKE ''
+                        AND I.PlanDate BETWEEN StartDate AND FinishDate
+                      LIMIT 1), 0) <> 0)
+  AND (38948 = 0
+       OR I.MedPatientCode = 38948)
+  AND (0 = 0
+       OR I.MedDoctorCode = 0)
+  AND (0 = 0
+       OR COALESCE(
+                     (SELECT MIR_.MedInspectResultCode
+                      FROM MedDiagnosis MD_
+                      JOIN MedInspectResult MIR_ ON MIR_.MedInspectCode = I.MedInspectCode
+                      JOIN MedDiagnosis MD2_ ON MD2_.MedDiagnosisCode = MIR_.MedDiagnosisCode
+                      WHERE MD_.MedDiagnosisCode = 0
+                        AND (MD2_.MedDiagnosisCode = MD_.MedDiagnosisCode
+                             OR (MD2_.TreePath >= (MD_.TreePath || INTTOHEX(MD_.MedDiagnosisCode))
+                                 AND MD2_.TreePath < INCHEXSTR(MD_.TreePath || INTTOHEX(MD_.MedDiagnosisCode))))
+                      LIMIT 1), 0) <> 0)
+  AND (0 = 0
+       OR COALESCE(
+                     (SELECT MedInspectConclusionCode
+                      FROM MedInspectConclusion
+                      WHERE MedInspectCode = I.MedInspectCode
+                        AND MedConclusionGroupCode = 0
+                      LIMIT 1), 0) <> 0)
+ORDER BY "planDate" DESC
+LIMIT 25
+OFFSET 0​
